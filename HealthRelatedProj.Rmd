@@ -1,0 +1,700 @@
+---
+title: "HealthRelatedProj"
+author: "Xingxing Tong"
+output: html_document
+---
+
+April 25,2016
+
+
+###Background:
+
+
+Basically, the goal of this project is to build a model making assessment on the employers’ health status given the data.(around 20,000 observations) Sample data is showed in “section 1.0”. Professonal data analysis skills like dealing with missing values and outliers, data visualization, decision tree and random forest are introduced in this report.I’m pretty sure you will get a basic idea about the way I am dealing with health related data analysis. If you have any concerns please let me know. Thanks. My email address is davidtxxfly@gmail.com
+
+
+###Brief Introduction:
+
+Company B must provide health insurance to its employees. Every few years, Company A’s insurer, reviews the health status of the employees. To do this, Company A calculates a health score between 0 and 6, where 6 denotes a very sick person. Company A calculates this score every quarter and claims that the employees have gotten sicker. Mean Health Score in Quarter 1 was 3.4, in Quarter 6 it was 3.5, and Quarter 12 it was 3.9.
+
+Company B has hired me to evaluate Company A's claim that employees are sicker. The ‘health score’ is a proprietary tool used by Company A, and it does not release the items that go into its formula. Company A has provided data over 12 quarters on 2,000 employees from Company B. This is a representative sample of the employees at the company, and we know that the information included in this data is not part of the health score calculation.
+
+Questions:
+
+1) What are the demographic characteristics of employees at Company B?	
+
+2) What characteristics is the health score associated with?	
+
+3) Based on the data provided, how do you evaluate Company A claim that employees are getting sicker?
+
+###Abstract:
+
+Part 1 is the data description part. Data summarizing and cleaning are conducted in this part.Three datasets (RegVin_data_nai,RegVin_data_del,RegVin_data_avg) are created based on different mehods in dealing with outliers. Employees's demographic characteristics are showed in part 2 in terms of four variables. Random forest model is applied in part 3 to find the most important variable in explaining health score. In part four, analysis is performed to evaluate the claim that employees are getting sicker.																	
+
+```{r,echo=FALSE}
+setwd("~/Desktop/App_tasks/1Acumen")
+suppressPackageStartupMessages({
+   library(dplyr) 
+   library(ggplot2) 
+   library(xlsx)
+   library(MASS)
+   library(tree)
+   library(randomForest)
+   library(gridExtra)
+   })
+#read data from excel
+#RegVin_data <- read.xlsx("Case_Analysis_v1.xlsx",2)
+#RegVin_data<- data.frame(RegVin_data)
+#save it as Rda
+#save(RegVin_data,file="RegVin_data.Rda")
+load("RegVin_data.Rda")
+#make litte adjustment to variables' names
+names(RegVin_data)[c(1,3,4,7)] <-c("Obs_Num","Id","Sex","Hos_vis")
+
+RegVin_data$Salary<-RegVin_data$Salary/1000
+
+#creating the factor variable
+RegVin_data$Sex <-factor(RegVin_data$Sex)
+RegVin_data$Race <-factor(RegVin_data$Race)
+RegVin_data$Hos_vis <-factor(RegVin_data$Hos_vis)
+RegVin_data$Quarter <-factor(RegVin_data$Quarter)
+```
+
+
+
+##Part1 Data Description and Cleaning
+
+###1.0 Data Sample
+
+There is 19,103 observations in total. 20 observations will be showed here as a data sample.
+
+```{r,echo=FALSE}
+RegVin_data[1:20,]
+```
+
+
+
+
+###1.1 Summary and Missing Data
+
+```{r,echo=FALSE}
+summary(RegVin_data[,2:9])
+```
+
+There are 9 variables and 19103 observations in this dataset. Summary of each variable is showed below. 
+
+Missing data only appears in variable "sex" and "Race". There are 71(0.37%) missing values in variable "sex" and 2123 (11.1%) missing values in variable "Race". Both of the variables are categorical variables.
+
+
+###1.2 Outliers
+
+Summary report above indicates that outliers are found in variable "Age" and "Health.Score". Apparently, both 7 and 172 are not reasonable age for working. 10 should not appear in "Health.Score" since this variable ranges from 0 to 6. Data analysis of this report starts from handling these outliers.
+
+**1.2.1 Age**
+
+```{r,echo=FALSE}
+g_agenai <- ggplot(data=RegVin_data, aes(RegVin_data$Age)) + 
+  geom_histogram(aes(y =..density..), 
+                 breaks=seq(0, 150, by = 2), 
+                 fill="green",
+                 alpha = .6) + 
+  geom_density(col=4) + 
+  labs(title="Histogram of Age (Org)") +
+  labs(x="Age", y="Count")
+
+RegVin_data[RegVin_data$Age>75,]
+RegVin_data[RegVin_data$Age<14,]
+
+emp_287 <-RegVin_data[RegVin_data$Age>75,]
+emp_391 <-RegVin_data[RegVin_data$Age<14,]
+age_287<-mean(RegVin_data[which(RegVin_data$Age<75 & RegVin_data$Age>14 & 
+                         RegVin_data$Salary>min(emp_287$Salary) & 
+                         RegVin_data$Salary<max(emp_287$Salary) ),]$Age)
+
+age_391<-mean(RegVin_data[which(RegVin_data$Age<75 & RegVin_data$Age>14 & 
+                         RegVin_data$Salary>min(emp_391$Salary) & 
+                         RegVin_data$Salary<max(emp_391$Salary) ),]$Age)
+
+#update age
+RegVin_data[which(RegVin_data$Id==287),]$Age <- age_287
+RegVin_data[which(RegVin_data$Id==391),]$Age <- age_391
+
+g_ageup<- qplot(RegVin_data$Age,geom="histogram", 
+      binwidth = 0.2,main="Histogram of Age (Updated)",xlab="Age")
+g_ageup
+```
+    
+The distribution of age indicates that there are a few values less than 14 or larger than 75. Eight observations from No.287 employee and 7 observations from No.391 employee. The age of No.287 employee ranges from 170 to 172 and the age of No.391 employee ranges from 7 to 8. 
+
+A couple of ways can be applied here to deal with these outliers. Since there are only 15 outliers in total, deleting them or replacing them by other values won't have too much influence on the final result. Here we just replace the age of these 15 observations with the mean other employees whose salaries are in the same range by assuming that employee's salary is proportional to his/her age in general. 
+
+Based on the results the age of No.287 employee is replaced with `r age_287` and the age of No.391 employee is replaced with `r age_391`. The histogram is showed above after we fixed outliers in age.
+
+
+**1.2.2 Health Score**
+
+```{r,echo=FALSE}
+p_hs_org<- qplot(RegVin_data$Health.Score,geom="histogram", 
+      binwidth = 0.5,main="Histogram of Health.Score (org)",xlab="Health.Score")
+
+num_score10<- length(RegVin_data[RegVin_data$Health.Score==10,]$Id)
+id_score10<-unique(RegVin_data[RegVin_data$Health.Score==10,]$Id)
+numid_score10<-length(unique(RegVin_data[RegVin_data$Health.Score==10,]$Id))
+```
+
+```{r,echo=FALSE}
+#naive
+RegVin_data_nai <-RegVin_data
+RegVin_data_nai[RegVin_data_nai$Health.Score==10,]$Health.Score=6
+
+p_hs_nai <-qplot(RegVin_data_nai$Health.Score,geom="histogram", 
+      binwidth = 0.5,main="Histogram of Health.Score (nai)",xlab="Health.Score")
+```
+
+Histogram of Health score below (Health.Score (Org)) indicates that there are `r num_score10` observations from `r numid_score10` employees with health score 10.
+
+It is reasonable to assume that 10 just indicates a very sick person. It is evident that these numbers should be replaced by 6. Dataset derived by this way is named as RegVin_data_nai(indicates a naive outliers handling method).
+
+After outliers have been replaced by 6, the new histogram of health score (Histogram of Health.Score (nai)) indicates that naive replacement created a peak around 6. This peak is really weird for histogram of employee's heath status which normally should have a bell-shaped structure. It suggests that dealing with abnormal values in this way is not good enough.
+
+    
+```{r,echo=FALSE}
+Obsnum_10 <- RegVin_data[RegVin_data$Health.Score==10,]$Obs_Num
+RegVin_data_del<-RegVin_data[-Obsnum_10,] #17865 obs.
+
+p_hs_del <-qplot(RegVin_data_del$Health.Score,geom="histogram", 
+      binwidth = 0.5,main="Histogram of Health.Score (del)",xlab="Health.Score")
+
+```
+
+
+Of course, deleting these kind of observations is an option for us since the total number of these observations is `r num_score10` (6.48% of total observations). I named dataset derived in this way as RegVin_data_del which contains 17865 observations from 1952 employees.
+
+However, dataset RegVin_data_del is really conservative since it deleted all outliers. Another option is provided here which will handle outliers effectively and keep observations as much as possible. 
+
+A table name "count_result" is created to count the number of times which ten appears given each unique id. Result is showed above. The first line means how many times which ten appears and the second line shows how many employees contain exact number of 10 in their total health scores. 
+
+```{r,echo=FALSE}
+#count the number of 10 for each Id
+id_count<- function(id) {
+  return(dim(RegVin_data[RegVin_data$Id==id & RegVin_data$Health.Score==10,])[1])
+}
+count_result<-sapply(X=id_score10,FUN=id_count)
+table(count_result)
+#get id of employee whose h_s has more than 2 tens
+id_score10_2timesmore<-id_score10[count_result>2]
+#get obs num
+obsnum_del <- RegVin_data[RegVin_data$Id%in%id_score10_2timesmore & RegVin_data$Health.Score==10,]$Obs_Num
+#delete these obs from the whole dataset
+RegVin_data_avg<-RegVin_data[-obsnum_del,] #18895 obs.
+
+id_score10_1<-id_score10[count_result==1]
+id_score10_2<-id_score10[count_result==2]
+
+```
+
+There are 616 employees whose health scores contain 10 only once and 207 employees whose health scores contain 10 only twice. If 10 appears in one's health score less than three times, I will replace these outliers by averaging the rest of his/her health scores. For example, health score of employee No.9 should be changed into 3.121571 in this case. Although replacement in this way may not be the best option for us, it is acceptable given one's health status is relatively stable for a period of time in general. However, people whose health scores contains more than two tens will be eliminated from the dataset due to that their data lose too much information. There are 208 observations from 51 employees will be deleted here which is much smaller than 1238 obs from 874 employees we deleted from dataset RegVin_data_del above.
+
+```{r,echo=FALSE}
+RegVin_data_avg[RegVin_data_avg$Id==id_score10_1[1],]
+```
+
+After we updated dataset in this way, there are still 3 employees left. All of them only have one observation for health score which is ten. We delete these three observations. Dataset derived in this way is named as RegVin_data_avg which has 18892 observations from 1952 employees.
+
+```{r,echo=FALSE}
+for(i in 1:length(id_score10_1)){
+  id<-id_score10_1[i]
+  healscoreNot10 <-
+      RegVin_data_avg[RegVin_data_avg$Id==id & RegVin_data_avg$Health.Score!=10,]$Health.Score
+  if(length(healscoreNot10)>0){
+  RegVin_data_avg[RegVin_data_avg$Id==id & RegVin_data_avg$Health.Score==10,]$Health.Score=
+    mean(healscoreNot10)
+  }
+}
+
+for(i in 1:length(id_score10_2)){
+  id<-id_score10_2[i]
+  healscoreNot10 <-
+      RegVin_data_avg[RegVin_data_avg$Id==id & RegVin_data_avg$Health.Score!=10,]$Health.Score
+  if(length(healscoreNot10)>0){
+  RegVin_data_avg[RegVin_data_avg$Id==id & RegVin_data_avg$Health.Score==10,]$Health.Score=
+    mean(healscoreNot10)
+  }
+}
+
+RegVin_data_avg[RegVin_data_avg$Health.Score==10,]
+
+obsnum_extradel <-RegVin_data_avg[RegVin_data_avg$Health.Score==10,]$Obs_Num
+RegVin_data_avg<-RegVin_data_avg[RegVin_data_avg$Obs_Num!=obsnum_extradel[1] &
+                                   RegVin_data_avg$Obs_Num!=obsnum_extradel[2] &
+                                 RegVin_data_avg$Obs_Num!=obsnum_extradel[3],] #18892 obs.
+
+p_hs_avg<-qplot(RegVin_data_avg$Health.Score,geom="histogram", 
+      binwidth = 0.5,main="Histogram of Health.Score (avg)",xlab="Health.Score")
+grid.arrange(p_hs_org,p_hs_nai,p_hs_del, p_hs_avg, ncol=2,nrow=2)
+```
+
+
+
+Histograms of health score given each datasets are showed above. It is evident that distributions of health score from datasets "RegVin_data_del" and "RegVin_data_avg" is more reasonable than the distributions from original datasets and "naive" datasets.
+
+
+    
+    
+##Part2 Demographic Characteristics##
+
+
+Both RegVin_data_del and RegVin_data_avg have 1952 employees in total, demographic characteristics from these two datasets will be really similar to each other. So analysis will be done on dataset RegVin_data_avg only.
+
+
+```{r,echo=FALSE}
+#######count sex
+
+# sex_count<- function(id) {
+#   return(RegVin_data_del[RegVin_data_del$Id==id,]$Sex[1])
+# }
+# countsex_result<-sapply(X=unique(RegVin_data_del$Id),FUN=sex_count)
+
+n <-length(unique(RegVin_data$Id))
+#count sex given quarters
+# sex_qcount <- function(id,qua){
+#   return(RegVin_data[RegVin_data$Id==id & RegVin_data$Quarter==qua,]$Sex[1])
+# }
+# countsex_qresult<- mapply(sex_qcount,unique(RegVin_data$Id),rep(1,n))
+# 
+# table(countsex_qresult)
+# sex_table<- matrix(rep(0,24),nrow=12,ncol=2,byrow=TRUE)
+# 
+# for(i in 1:12){
+#     countsex_qresult<- mapply(sex_qcount,unique(RegVin_data$Id),rep(i,n))
+#     sex_table[i,]<-table(countsex_qresult)
+#}
+
+
+#sex_table<- data.frame(sex_table)
+#colnames(sex_table)<- c("Female","Male")
+#sex_table$quarters <-1:12
+#save it as Rda
+#save(sex_table,file="sex_table.Rda")
+
+# sum(sex_table[1,][1:2])
+# 
+# sex_data<- matrix(c(rep(c(0,1),351),rep(c(1,1),331)),nrow=682,ncol=2,byrow=TRUE)
+# sex_data<-data.frame(sex_data)  
+#                                                        sum(sex_table[1,][1:2])
+#                                         sex_table[1,][2]
+#                         sex_table[1,][1]
+#                         
+                
+
+#########1#########
+###sex table
+load("sex_table.Rda")
+
+###sex plot
+ggplot(data = RegVin_data, aes(Sex,fill= Quarter)) + geom_bar()+
+      facet_wrap(~ Quarter)+
+      ggtitle("Sex Distribution given different quarters")
+
+###########Race################
+
+#count race given quarters
+ race_qcount <- function(id,qua){
+   return(RegVin_data[RegVin_data$Id==id & RegVin_data$Quarter==qua,]$Race[1])
+ }
+ 
+#countrace_qresult<- mapply(race_qcount,unique(RegVin_data$Id),rep(1,n))
+#table(countrace_qresult)
+ 
+# race_table<- matrix(rep(0,36),nrow=12,ncol=3,byrow=TRUE)
+# 
+#  for(i in 1:12){
+#      countrace_qresult<- mapply(race_qcount,unique(RegVin_data$Id),rep(i,n))
+#      race_table[i,]<-table(countrace_qresult)
+# }
+# 
+# race_table<- data.frame(race_table)
+# names(race_table)<-c("1","2","3","quarters")
+# 
+# race_table$quarters <-1:12
+
+#save it as Rda
+#save(race_table,file="race_table.Rda")
+
+
+#############2########### 
+ ###race table
+load("race_table.Rda")
+
+###race plot
+ggplot(data = RegVin_data, aes(Race,fill= Quarter)) + geom_bar()+
+      facet_wrap(~ Quarter)+
+      ggtitle("Race Distribution given different quarters")
+
+###################Age#####
+
+
+###age plot
+ggplot(data = RegVin_data, aes(Age,fill= Quarter)) + geom_histogram(binwidth=0.2)+
+      facet_wrap(~ Quarter)+
+      ggtitle("Age Distribution given different quarters")
+
+
+
+#count age
+agecount_dat <-data.frame(matrix(0,ncol=2,nrow=length(unique(RegVin_data_del$Id))))
+agecount_dat[,1] <-unique(RegVin_data_del$Id)
+age_count<- function(id) {
+  return(mean(RegVin_data_del[RegVin_data_del$Id==id,]$Age))
+}
+countage_result<-sapply(X=unique(RegVin_data_del$Id),FUN=age_count)
+agecount_dat[,2] <- countage_result
+
+####### plot ##########
+p_age<-qplot(agecount_dat[,2],geom="histogram", 
+      binwidth = 0.5,main="Distribution of Age(Mean of 12 Q)",xlab="Age")
+
+agecount<- c(sum(agecount_dat$X2<20),sum(agecount_dat$X2>=20 & agecount_dat$X2<30),
+  sum(agecount_dat$X2>=30 & agecount_dat$X2<40),sum(agecount_dat$X2>=40 & agecount_dat$X2<50),
+  sum(agecount_dat$X2>=50 & agecount_dat$X2<60),sum(agecount_dat$X2>=60)
+  )
+names(agecount) <-c("<20","(20,30]","(30,40]","(40,50]","(50,60]",">60")
+
+
+#####################salary
+
+###Salary plot
+ggplot(data = RegVin_data, aes(Salary,fill= Quarter)) + geom_histogram(binwidth=4)+
+      facet_wrap(~ Quarter)+
+      ggtitle("Salary Distribution given different quarters")
+
+
+#count salary
+salarycount_dat <-data.frame(matrix(0,ncol=2,nrow=length(unique(RegVin_data_del$Id))))
+salarycount_dat[,1] <-unique(RegVin_data_del$Id)
+salary_count<- function(id) {
+  return(mean(RegVin_data_del[RegVin_data_del$Id==id,]$Salary))
+}
+countsalary_result<-sapply(X=unique(RegVin_data_del$Id),FUN=salary_count)
+salarycount_dat[,2] <- countsalary_result
+####### plot ##########
+p_sal <-qplot(salarycount_dat[,2],geom="histogram",binwidth =300,main="Distribution of Salary(Mean of 12Q)",xlab="Salary")
+#min(salarycount_dat[,2]) 33350.7
+salarycount<- c(sum(salarycount_dat$X2<43350.7),sum(salarycount_dat$X2>=43350.7 & salarycount_dat$X2<53350.7),sum(salarycount_dat$X2>=53350.7 & salarycount_dat$X2<=63330) )
+names(salarycount) <-c("(33350.7,43350.7]","(43350.7,53350.7]","(53350.7,63330]")
+
+
+#grid.arrange(p_age, p_sal, ncol=1,nrow=2)
+```
+
+
+From the graph "Sex Distribution given different quarters", two genders are distributed equally given each quarter. The total number of employees who joined the healthy survey increased gradually according the quarter.The table below also indicates the samiliar result.
+```{r,echo=FALSE}
+sex_table
+```
+
+The distribution of race,age,salary also indicate the similar pattern. More and more employee joined the survey as the quarter increases. 
+
+
+```{r,echo=FALSE}
+#count
+sex_table
+race_table
+#agecount
+#salarycount
+```
+
+
+##Part3 Health Score##
+
+###3.1 Visualization
+
+In order to find out which vairables are the key factors in explaining employees' health score I used the scatter plots to show the relationship between health score and employees' demographic information first.
+
+- Scatter plots (associated with the health score)
+
+```{r,echo=FALSE}
+ggplot(data = RegVin_data_avg, aes(x=Age,y=Health.Score,color=Sex)) +geom_point()+
+      geom_smooth()+facet_wrap(~ Quarter)+
+      ggtitle("Age v.s. Health.Score given different quarters (Gender)")
+
+ggplot(data = RegVin_data_avg, aes(x=Age,y=Health.Score,color=Race)) +geom_point()+
+      geom_smooth()+facet_wrap(~ Quarter)+
+      ggtitle("Age v.s. Health.Score given different quarters (Race)")
+
+#ggplot(data = RegVin_data_avg, aes(x=Salary,y=Health.Score,color=Sex)) +geom_point()+
+#      geom_smooth()+facet_wrap(~ Quarter)+
+#     ggtitle("Salary v.s. Health.Score given different quarters (Gender)")
+
+#ggplot(data = RegVin_data_avg, aes(x=Salary,y=Health.Score,color=Race)) +geom_point()+
+#      geom_smooth()+facet_wrap(~ Quarter)+
+#     ggtitle("Salary v.s. Health.Score given different quarters (Race)")
+
+```
+
+These scatter plots do show some patterns. However, it is too vague to draw conclusion based on those visualization results. So we apply random forests model next to get explicit results.  
+
+###3.2 RandomForests
+
+Random forests model is applied here to find the most related factor to health score among 6 variables.(Obs_num and employees' Id are excluded). Importance scores for each variable given different settings are derived by the Random Forest model. These scores can be simply referred as the relative relationship among the six variables in explaining health score. 500 trees are grown within each random forest. Since sqrt(6) is 2.45, both 2 and 3 are selected here as the subset size. Summary of these four random forest results are provided in Appendix. From the plot showed above, it is clear that both Age and Salary are crucial for health score given different subset size and dataset and Age is more important than Salary. The plot also indicates that our conclusion is robust since the general pattern is very stable given different subset sizes and datasets. Quarter,Race,Hos_vis and Sex are less important variables in explaining the health score.
+
+
+
+```{r,echo=FALSE}
+frmla = Health.Score ~ Quarter +Sex+Race+Age+Hos_vis+Salary
+
+######RegVin_data_del########
+#set.seed(1)
+#train <- sample(1:nrow(RegVin_data_del),nrow(RegVin_data_del)/2)
+#rf_fit2<-randomForest(frmla,RegVin_data_del,na.action =   na.omit,subset=train,mtry=2,importance=TRUE)
+#save(rf_fit2,file="rf_fit2.Rda")
+
+load("rf_fit.Rda")
+load("rf_fit2.Rda")
+rf_imp <- sort(importance(rf_fit)[,2],decreasing = TRUE) 
+rf_impdat<- data.frame(Variables=names(rf_imp),Importance=rf_imp)
+p <- ggplot(rf_impdat, aes(y=Importance))
+rf_impdat$reorder <-  reorder(rf_impdat$Variables, -rf_impdat$Importance)
+
+rf_imp2 <- sort(importance(rf_fit2)[,2],decreasing = TRUE) 
+rf_impdat2<- data.frame(Variables=names(rf_imp2),Importance=rf_imp2)
+p2 <- ggplot(rf_impdat2, aes(y=Importance))
+rf_impdat2$reorder <-  reorder(rf_impdat$Variables, -rf_impdat$Importance) 
+
+```
+
+```{r,echo=FALSE}
+######RegVin_data_avg########
+#train_new <- sample(1:nrow(RegVin_data_avg),nrow(RegVin_data_avg)/2)
+#rf_fitnew2<-randomForest(frmla,RegVin_data_avg,na.action = na.omit,subset=train_new,mtry=2,importance=TRUE)
+#save(rf_fitnew2,file="rf_fitnew2.Rda")
+
+load("rf_fitnew.Rda")
+load("rf_fitnew2.Rda")
+
+rf_impnew <- sort(importance(rf_fitnew)[,2],decreasing = TRUE)
+rf_impdatnew<- data.frame(Variables=names(rf_impnew),Importance=rf_impnew)
+p <- ggplot(rf_impdatnew, aes(y=Importance)) 
+rf_impdatnew$reorder <-  reorder(rf_impdatnew$Variables, -rf_impdatnew$Importance)
+
+rf_impnew2 <- sort(importance(rf_fitnew2)[,2],decreasing = TRUE)
+rf_impdatnew2<- data.frame(Variables=names(rf_impnew2),Importance=rf_impnew2)
+p2 <- ggplot(rf_impdatnew2, aes(y=Importance)) 
+rf_impdatnew2$reorder <-  reorder(rf_impdatnew2$Variables, -rf_impdatnew2$Importance)
+
+rf_important_var <- data.frame(Var_Names=c(names(rf_imp),names(rf_imp2),names(rf_impnew),names(rf_impnew2)))
+
+rf_important_var$Dataset <- rep(c("del","avg"),each=12)
+rf_important_var$Subsize <- rep(c(3,2,3,2),each=6)
+rf_important_var$Importance <- c(rf_imp,rf_imp2,rf_impnew,rf_impnew2)
+
+rf_important_var2<-rf_important_var[rf_important_var$Subsize==2,]
+rf_important_var3<-rf_important_var[rf_important_var$Subsize==3,]
+
+
+new_rf_important_var2 <- rf_important_var2 %>%
+    mutate(Var_Names = reorder(Var_Names, Importance, max))
+p2<-ggplot(new_rf_important_var2, aes(x=Var_Names,y = Importance,group = 2))    +geom_line(aes(colour=Dataset, group=Dataset)) + 
+    geom_point(aes(colour=Dataset),size=3)+
+    ggtitle("Variable Importance Plot with subset size equals 2")
+
+new_rf_important_var3 <- rf_important_var3 %>%
+    mutate(Var_Names = reorder(Var_Names, Importance, max))
+p3<-ggplot(new_rf_important_var3, aes(x=Var_Names,y = Importance,group = 2))    +geom_line(aes(colour=Dataset, group=Dataset)) + 
+    geom_point(aes(colour=Dataset),size=3)+
+    ggtitle("Variable Importance Plot with subset size equals 3")
+
+grid.arrange(p2,p3,nrow=2)
+
+```
+
+
+##Part4 Overall Evaluation##
+
+It is inappropriate to calculate the mean on original dataset since there are 1238 outliers in the health score. So means are calculated again on datasets "RegVin_data_del" and "RegVin_data_avg". Although means calculated by our renewed datasets are generally smaller than those we calculated before, there is still an evident increasing pattern showed below.
+
+```{r,echo=FALSE}
+#Mean
+org_1<-mean(RegVin_data[RegVin_data$Quarter==1,]$Health.Score)
+org_6<-mean(RegVin_data[RegVin_data$Quarter==6,]$Health.Score)
+org_12<-mean(RegVin_data[RegVin_data$Quarter==12,]$Health.Score)
+
+del_1 <-mean(RegVin_data_del[RegVin_data_del$Quarter==1,]$Health.Score)
+del_6 <-mean(RegVin_data_del[RegVin_data_del$Quarter==6,]$Health.Score)
+del_12 <-mean(RegVin_data_del[RegVin_data_del$Quarter==12,]$Health.Score)
+
+avg_1 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==1,]$Health.Score)
+avg_6 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==6,]$Health.Score)
+avg_12 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==12,]$Health.Score)
+
+health_status<- data.frame(Quarters=c(1,6,12))
+health_status$Mean_org <- c(org_1,org_6,org_12)
+health_status$Mean_del <- c(del_1,del_6,del_12)
+health_status$Mean_avg <- c(avg_1,avg_6,avg_12)
+health_mean <- data.frame(Quarters=rep(c(1,6,12),3))
+health_mean$Dataset <-rep(c("Org","Del","Avg"),each=3)
+health_mean$Mean <- c(health_status$Mean_org,health_status$Mean_del,
+                      health_status$Mean_avg)
+health_mean$Quarters <-factor(health_mean$Quarters)
+
+# Lines and points; colour depends on Dataset
+ggplot(health_mean, aes(x=Quarters, y=Mean)) + 
+    geom_line(aes(colour=Dataset, group=Dataset)) + 
+    geom_point(aes(colour=Dataset),size=3)+
+    ggtitle("Mean of Health Score given different quarters")
+```
+
+In part 3, the Random Forest model shows that Age is the most crucial variable for health score. It is reasonable to study the distribution of age given different quarters.  
+
+```{r,echo=FALSE}
+ggplot(data = RegVin_data_del, aes(x = Age)) + 
+      geom_histogram(binwidth = 0.2,aes(color = Quarter))+
+      facet_wrap(~Quarter)+
+      ggtitle("Age Distribution given different quarters (del)")
+
+ggplot(data = RegVin_data_avg, aes(x = Age)) + 
+      geom_histogram(binwidth = 0.2,aes(color = Quarter))+
+      facet_wrap(~Quarter)+
+      ggtitle("Age Distribution given different quarters (avg)")
+
+```
+
+Two groups of histograms indicate that age structures of the first four quarters are very different from the rest eight quarters.So,the claim that employees are getting sicker seems far-fetched if we include these four quarters into our dataset for analysis. It is pointless to compare the health status of two groups of people with totally different age structures since younger people trend to be healthier than older people in general.
+
+The age structures from quarter 5 to quarter 12 are very close to each other, further analysis will be done on them.
+
+```{r,echo=FALSE}
+del_5 <-mean(RegVin_data_del[RegVin_data_del$Quarter==5,]$Health.Score)
+del_6 <-mean(RegVin_data_del[RegVin_data_del$Quarter==6,]$Health.Score)
+del_7 <-mean(RegVin_data_del[RegVin_data_del$Quarter==7,]$Health.Score)
+del_8 <-mean(RegVin_data_del[RegVin_data_del$Quarter==8,]$Health.Score)
+del_9 <-mean(RegVin_data_del[RegVin_data_del$Quarter==9,]$Health.Score)
+del_10 <-mean(RegVin_data_del[RegVin_data_del$Quarter==10,]$Health.Score)
+del_11 <-mean(RegVin_data_del[RegVin_data_del$Quarter==11,]$Health.Score)
+del_12 <-mean(RegVin_data_del[RegVin_data_del$Quarter==12,]$Health.Score)
+
+avg_5 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==5,]$Health.Score)
+avg_6 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==6,]$Health.Score)
+avg_7 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==7,]$Health.Score)
+avg_8 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==8,]$Health.Score)
+avg_9 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==9,]$Health.Score)
+avg_10 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==10,]$Health.Score)
+avg_11 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==11,]$Health.Score)
+avg_12 <-mean(RegVin_data_avg[RegVin_data_avg$Quarter==12,]$Health.Score)
+
+health_mean <- data.frame(Quarters=rep(5:12,2))
+health_mean$Quarters <-factor(health_mean$Quarters)
+health_mean$Dataset <-rep(c("Del","Avg"),each=8)
+
+health_mean$Mean <- c(del_5,del_6,del_7,del_8,del_9,del_10,del_11,del_12,
+                      avg_5,avg_6,avg_7,avg_8,avg_9,avg_10,avg_11,avg_12)
+
+# Lines and points; colour depends on Dataset
+ggplot(health_mean, aes(x=Quarters, y=Mean)) + 
+    geom_line(aes(colour=Dataset, group=Dataset)) + 
+    geom_point(aes(colour=Dataset),size=3)+
+    ggtitle("Mean of Health Score given different quarters")
+
+```
+
+From the plot showed above, it is true that the mean of health score given each quarter is growing. However, changing from 3.1 to 3.3 in 7 quarters is acceptable since it is natural that people are getting sicker as age increases. Result we get here is closer to the reality since the comparison is relatively fair and outliers have been eliminated from these datasets.
+
+In conclusion, it is true that employees of company B are getting sicker. However, their health scores have increased from 3.1 to 3.3 from quarter 5 to quarter 12. The claim that employees' health scores increased from 3.4 to 3.9 in twelve quarters seems less convincing.
+
+
+
+
+```{r,echo=FALSE,eval=FALSE}
+##Appendix##
+
+n <-length(unique(RegVin_data$Id))
+mdata_matrix <-matrix(rep(0,n*12),nrow=12,ncol=n,byrow=TRUE)
+
+hs_qcount <- function(id,qua){
+  len <-length(row(RegVin_data[RegVin_data$Id==id & RegVin_data$Quarter==qua,]))
+  if(len==9){len=1}
+   return(len)
+ }
+
+## better to use saveRDS and readRDS in future.
+if(file.exists("mdata_matrix.Rda")) {
+  load("mdata_matrix.Rda")
+} else {
+  ## Note that 10 is probably NA. Need to catch those in your count below.
+  for(i in 1:12){
+    mdata_matrix[i,]<-mapply(hs_qcount,unique(RegVin_data$Id),rep(i,n))
+  }
+  save(mdata_matrix,file="mdata_matrix.Rda")
+}
+
+#image(mdata_matrix)
+
+
+# image(mdata_matrix[,order(apply(mdata_matrix,2,sum))])
+
+
+########del dataset
+
+# n <-length(unique(RegVin_data_del$Id))
+# mdata_matrix_del <-matrix(rep(0,n*12),nrow=12,ncol=n,byrow=TRUE)
+# 
+# hs_qcount <- function(id,qua){
+#   len <-length(row(RegVin_data_del[RegVin_data_del$Id==id & RegVin_data_del$Quarter==qua,]))
+#   if(len==9){len=1}
+#    return(len)
+#  }
+# for(i in 1:12){
+#     mdata_matrix_del[i,]<-mapply(hs_qcount,unique(RegVin_data_del$Id),rep(i,n))
+# }
+# save(mdata_matrix_del,file="mdata_matrix_del.Rda")
+# 
+# 
+# load("mdata_matrix_del.Rda")
+# 
+# image(mdata_matrix_del[,order(apply(mdata_matrix_del,2,sum))])
+
+
+######
+
+#############Notes##################
+# dim(mdata_matrix)
+# apply(mdata_matrix,1,sum)
+# image(mdata_matrix[,order(apply(mdata_matrix,2,sum))])
+
+
+
+
+
+
+
+##health score
+
+p_hs<-ggplot(data = RegVin_data, aes(Health.Score,fill= Quarter)) +
+      geom_histogram(binwidth=0.2)+
+      facet_wrap(~ Quarter)+
+      ggtitle("Health.Score Distribution given different quarters")
+p_hs
+
+
+####Tree Results#####
+#The random forest results derived in part three
+# rf_fit
+# rf_fit2
+# rf_fitnew
+# rf_fitnew2
+```
+
+
+
+```{r,echo=FALSE,eval=FALSE}
+# Age and Salary
+#shape=
+
+ggplot(data = RegVin_data_avg, aes(x=Age,y=Salary/1000,color=Sex)) +geom_point()+
+      geom_smooth()+facet_wrap(~ Quarter)+
+      ggtitle("Age v.s. Salary given different quarters (sex)")
+
+ggplot(data = RegVin_data_avg, aes(x=Age,y=Salary/1000,color=Race)) +geom_point()+
+      geom_smooth()+facet_wrap(~ Quarter)+
+      ggtitle("Age v.s. Salary given different quarters (Race)")
+```
